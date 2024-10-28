@@ -5,7 +5,6 @@ import requests
 from tensorflow.keras.models import load_model
 import cv2
 import numpy as np
-import os
 from flask_cors import CORS
 
 # Initialize the Flask app
@@ -32,67 +31,11 @@ def calculate_land_area(latitude_longitude_coordinates):
         print("Error occurred during area calculation:", e)
         return None
 
-# Function to convert lat/long to pixel coordinates using the Mercator projection for Google Maps
-def lat_lon_to_pixel(lat, lon, zoom, tile_size=256):
-    """Convert latitude and longitude to pixel coordinates."""
-    siny = np.sin(np.radians(lat))
-    siny = np.clip(siny, -0.9999, 0.9999)  # Avoid infinity values
-    x = tile_size * (0.5 + lon / 360.0)
-    y = tile_size * (0.5 - np.log((1 + siny) / (1 - siny)) / (4 * np.pi))
-    scale = 2 ** zoom
-    return int(x * scale), int(y * scale)
-
-# Function to crop the image to the bounding box of the provided coordinates
-def crop_image_to_coordinates(image_path, coordinates, center_latitude, center_longitude, zoom=17, image_size=(640, 640)):
-    # Load the image using OpenCV
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"Error: Could not load the image {image_path} for cropping.")
-        return None
-
-    # Image dimensions
-    img_height, img_width = image.shape[:2]
-    
-    # Convert the center latitude/longitude to pixel coordinates (center of the image)
-    center_x, center_y = lat_lon_to_pixel(center_latitude, center_longitude, zoom, tile_size=image_size[0])
-
-    # Calculate the bounding box around the center pixel based on the geographic coordinates
-    pixel_coords = [lat_lon_to_pixel(lat, lon, zoom, tile_size=image_size[0]) for lat, lon in coordinates]
-
-    # Calculate min/max X and Y based on pixel coordinates of the bounding box
-    min_x = min([p[0] for p in pixel_coords])
-    min_y = min([p[1] for p in pixel_coords])
-    max_x = max([p[0] for p in pixel_coords])
-    max_y = max([p[1] for p in pixel_coords])
-
-    # Translate bounding box relative to the center of the image (640x640) centered around center_x, center_y
-    crop_min_x = max(0, min_x - center_x + img_width // 2)
-    crop_min_y = max(0, min_y - center_y + img_height // 2)
-    crop_max_x = min(img_width, max_x - center_x + img_width // 2)
-    crop_max_y = min(img_height, max_y - center_y + img_height // 2)
-
-    # Ensure the cropping coordinates are within the image dimensions
-    if crop_min_x >= img_width or crop_min_y >= img_height or crop_max_x <= 0 or crop_max_y <= 0:
-        print(f"Error: Cropping bounds are outside image dimensions. Image size: {image.shape}")
-        return None
-
-    # Crop the image using the calculated bounding box
-    cropped_image = image[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
-
-    # Save the cropped image
-    cropped_output_file = "cropped_" + image_path
-    cv2.imwrite(cropped_output_file, cropped_image)
-    print(f"Cropped image saved successfully to {cropped_output_file}")
-    return cropped_output_file
-
-# Function to generate and save a satellite image based on the provided coordinates and crop it
-def generate_and_crop_satellite_image(latitude_longitude_coordinates, output_file='satellite_image.png'):
+# Function to generate and save a satellite image based on the provided coordinates
+def generate_satellite_image(latitude_longitude_coordinates, output_file='satellite_image.png'):
     try:
-        # Calculate the center latitude/longitude
         center_latitude = sum(coord[0] for coord in latitude_longitude_coordinates) / len(latitude_longitude_coordinates)
         center_longitude = sum(coord[1] for coord in latitude_longitude_coordinates) / len(latitude_longitude_coordinates)
-
-        # Generate the satellite image using Google Static Maps API
         params = {
             'center': f'{center_latitude},{center_longitude}',
             'zoom': '17',
@@ -102,17 +45,12 @@ def generate_and_crop_satellite_image(latitude_longitude_coordinates, output_fil
         }
         url = 'https://maps.googleapis.com/maps/api/staticmap'
         response = requests.get(url, params=params)
-        
-        # Check if the response from Google Maps API is successful
         if response.status_code == 200:
             with open(output_file, 'wb') as file:
                 file.write(response.content)
-            print(f"Satellite image saved successfully to {output_file}")
-
-            # Crop the image based on the coordinates
-            return crop_image_to_coordinates(output_file, latitude_longitude_coordinates, center_latitude, center_longitude)
+            return output_file
         else:
-            print(f"Error fetching the satellite image: {response.status_code}, {response.text}")
+            print("Error fetching the satellite image:", response.status_code, response.text)
             return None
     except Exception as e:
         print("An error occurred while generating the satellite image:", e)
@@ -155,8 +93,8 @@ def land_analysis():
     if area_meters is None:
         return jsonify({"error": "Unable to calculate land area"}), 400
     
-    # Step 2: Generate and crop satellite image
-    image_path = generate_and_crop_satellite_image(land_coordinates)
+    # Step 2: Generate satellite image
+    image_path = generate_satellite_image(land_coordinates)
     if not image_path:
         return jsonify({"error": "Unable to generate satellite image"}), 400
     
@@ -193,5 +131,4 @@ def land_analysis():
 
 if __name__ == '__main__':
     # Run Flask app
-   app.run(debug=True, host='0.0.0.0', port=5000)
-
+    app.run(debug=True, host='0.0.0.0', port=5000)
